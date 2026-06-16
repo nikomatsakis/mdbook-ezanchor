@@ -10,6 +10,7 @@ use mdbook_preprocessor::{Preprocessor, PreprocessorContext, parse_input};
 use regex::Regex;
 use walkdir::WalkDir;
 
+// ANCHOR: cli-struct
 #[derive(Parser)]
 struct Cli {
     #[command(subcommand)]
@@ -20,6 +21,7 @@ struct Cli {
 enum Command {
     Supports { renderer: String },
 }
+// ANCHOR_END: cli-struct
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -220,6 +222,7 @@ fn scan_anchors(root: &Path, scan_dirs: &[PathBuf]) -> Result<HashMap<String, An
     let anchor_start = Regex::new(r"//\s*ANCHOR:\s*(\w[\w-]*)").unwrap();
     let anchor_end = Regex::new(r"//\s*ANCHOR_END:\s*(\w[\w-]*)").unwrap();
 
+    // ANCHOR: scan-loop
     for dir in scan_dirs {
         if !dir.exists() {
             continue;
@@ -233,6 +236,7 @@ fn scan_anchors(root: &Path, scan_dirs: &[PathBuf]) -> Result<HashMap<String, An
             if !matches!(ext, "rs" | "toml" | "json" | "yaml" | "yml" | "ts" | "js") {
                 continue;
             }
+            // ANCHOR_END: scan-loop
 
             let content = match std::fs::read_to_string(path) {
                 Ok(c) => c,
@@ -289,6 +293,7 @@ fn scan_anchors(root: &Path, scan_dirs: &[PathBuf]) -> Result<HashMap<String, An
     Ok(anchors)
 }
 
+// ANCHOR: dedent-fn
 fn dedent(lines: &[String]) -> String {
     if lines.is_empty() {
         return String::new();
@@ -313,14 +318,59 @@ fn dedent(lines: &[String]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+// ANCHOR_END: dedent-fn
 
 fn expand_anchors(content: &str, anchors: &HashMap<String, Anchor>, config: &Config) -> String {
-    let mut result = expand_block_anchors(content, anchors, config);
-    result = expand_inline_anchors(&result, anchors, config);
+    let mut result = String::new();
+    let mut lines = content.lines().peekable();
+    let mut pending_nonfenced = String::new();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        let backtick_count = trimmed.len() - trimmed.trim_start_matches('`').len();
+
+        if backtick_count >= 3 && trimmed[backtick_count..].chars().next().map_or(true, |c| c != '`') {
+            let fence = &trimmed[..backtick_count];
+            let info = trimmed[backtick_count..].trim();
+
+            let mut fence_body = String::new();
+            fence_body.push_str(line);
+            fence_body.push('\n');
+
+            let mut closed = false;
+            while let Some(inner) = lines.next() {
+                fence_body.push_str(inner);
+                fence_body.push('\n');
+                let inner_trimmed = inner.trim_start();
+                if inner_trimmed.starts_with(fence) && inner_trimmed[fence.len()..].trim().is_empty() {
+                    closed = true;
+                    break;
+                }
+            }
+
+            result.push_str(&expand_nonfenced(&pending_nonfenced, anchors, config));
+            pending_nonfenced.clear();
+
+            if backtick_count == 3 && info.starts_with("{anchor}") && closed {
+                result.push_str(&expand_single_block_anchor(&fence_body, anchors, config));
+            } else {
+                result.push_str(&fence_body);
+            }
+        } else {
+            pending_nonfenced.push_str(line);
+            pending_nonfenced.push('\n');
+        }
+    }
+
+    if !content.ends_with('\n') && pending_nonfenced.ends_with('\n') {
+        pending_nonfenced.pop();
+    }
+
+    result.push_str(&expand_nonfenced(&pending_nonfenced, anchors, config));
     result
 }
 
-fn expand_inline_anchors(
+fn expand_nonfenced(
     content: &str,
     anchors: &HashMap<String, Anchor>,
     config: &Config,
@@ -346,34 +396,34 @@ fn expand_inline_anchors(
     .into_owned()
 }
 
-fn expand_block_anchors(
-    content: &str,
+fn expand_single_block_anchor(
+    fence_text: &str,
     anchors: &HashMap<String, Anchor>,
     config: &Config,
 ) -> String {
-    let re = Regex::new(r"(?m)^```\{anchor\}\s*\n([\s\S]*?)^```\s*$").unwrap();
-    re.replace_all(content, |caps: &regex::Captures| {
-        let body = caps[1].trim();
-        let name = body.lines().next().unwrap_or("").trim();
-        match anchors.get(name) {
-            Some(anchor) => {
-                let rel = anchor.relative_path(&config.root);
-                let url = anchor.github_url(config);
-                let lang = anchor.file_extension();
-                format!(
-                    "```{lang}\n{content}\n```\n\n*[`{rel}:{start}-{end}`]({url})*",
-                    content = anchor.content,
-                    start = anchor.line_start,
-                    end = anchor.line_end,
-                )
-            }
-            None => {
-                eprintln!("warning: unknown anchor `{name}`");
-                format!("**⚠️ unknown anchor `{name}`**")
-            }
+    let body = fence_text
+        .strip_prefix("```{anchor}")
+        .unwrap_or("")
+        .trim();
+    let body = body.strip_suffix("```").unwrap_or(body).trim();
+    let name = body.lines().next().unwrap_or("").trim();
+    match anchors.get(name) {
+        Some(anchor) => {
+            let rel = anchor.relative_path(&config.root);
+            let url = anchor.github_url(config);
+            let lang = anchor.file_extension();
+            format!(
+                "```{lang}\n{content}\n```\n\n*[`{rel}:{start}-{end}`]({url})*",
+                content = anchor.content,
+                start = anchor.line_start,
+                end = anchor.line_end,
+            )
         }
-    })
-    .into_owned()
+        None => {
+            eprintln!("warning: unknown anchor `{name}`");
+            format!("**⚠️ unknown anchor `{name}`**")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -408,7 +458,7 @@ mod tests {
         let anchors = test_anchors();
         let config = test_config();
         let input = "See {anchor}`foo` for details.";
-        let output = expand_inline_anchors(input, &anchors, &config);
+        let output = expand_anchors(input, &anchors, &config);
         assert!(output.contains("[`src/lib.rs:10-15`]"));
         assert!(output.contains("https://github.com/user/repo/blob/main/src/lib.rs#L10-L15"));
     }
@@ -418,7 +468,7 @@ mod tests {
         let anchors = test_anchors();
         let config = test_config();
         let input = "```{anchor}\nfoo\n```";
-        let output = expand_block_anchors(input, &anchors, &config);
+        let output = expand_anchors(input, &anchors, &config);
         assert!(output.contains("```rs"));
         assert!(output.contains("fn foo()"));
         assert!(output.contains("src/lib.rs:10-15"));
@@ -429,8 +479,18 @@ mod tests {
         let anchors = HashMap::new();
         let config = test_config();
         let input = "{anchor}`missing`";
-        let output = expand_inline_anchors(input, &anchors, &config);
+        let output = expand_anchors(input, &anchors, &config);
         assert!(output.contains("unknown anchor"));
+    }
+
+    #[test]
+    fn fenced_code_not_expanded() {
+        let anchors = test_anchors();
+        let config = test_config();
+        let input = "````\n```{anchor}\nfoo\n```\n````\n";
+        let output = expand_anchors(input, &anchors, &config);
+        assert!(output.contains("```{anchor}"));
+        assert!(!output.contains("fn foo()"));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+[book]
+title = "mdbook-ezanchor"
+authors = ["Niko Matsakis"]
+language = "en"
+src = "md"
+
+[preprocessor.anchor]
+command = "mdbook-ezanchor"
+scan-dirs = ["src"]
