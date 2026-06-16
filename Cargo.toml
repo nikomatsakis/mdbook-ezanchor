@@ -1,6 +1,6 @@
 [package]
 name = "mdbook-ezanchor"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "mdbook preprocessor for anchor references into source code"
 authors = ["Niko Matsakis <niko@alum.mit.edu>"]
