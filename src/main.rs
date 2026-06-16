@@ -322,14 +322,15 @@ fn dedent(lines: &[String]) -> String {
 
 fn expand_anchors(content: &str, anchors: &HashMap<String, Anchor>, config: &Config) -> String {
     let mut result = String::new();
-    let mut lines = content.lines().peekable();
+    let mut lines = content.lines();
     let mut pending_nonfenced = String::new();
 
+    #[allow(clippy::while_let_on_iterator)]
     while let Some(line) = lines.next() {
         let trimmed = line.trim_start();
         let backtick_count = trimmed.len() - trimmed.trim_start_matches('`').len();
 
-        if backtick_count >= 3 && trimmed[backtick_count..].chars().next().map_or(true, |c| c != '`') {
+        if backtick_count >= 3 && !trimmed[backtick_count..].starts_with('`') {
             let fence = &trimmed[..backtick_count];
             let info = trimmed[backtick_count..].trim();
 
@@ -338,11 +339,13 @@ fn expand_anchors(content: &str, anchors: &HashMap<String, Anchor>, config: &Con
             fence_body.push('\n');
 
             let mut closed = false;
-            while let Some(inner) = lines.next() {
+            for inner in lines.by_ref() {
                 fence_body.push_str(inner);
                 fence_body.push('\n');
                 let inner_trimmed = inner.trim_start();
-                if inner_trimmed.starts_with(fence) && inner_trimmed[fence.len()..].trim().is_empty() {
+                if inner_trimmed.starts_with(fence)
+                    && inner_trimmed[fence.len()..].trim().is_empty()
+                {
                     closed = true;
                     break;
                 }
@@ -370,11 +373,7 @@ fn expand_anchors(content: &str, anchors: &HashMap<String, Anchor>, config: &Con
     result
 }
 
-fn expand_nonfenced(
-    content: &str,
-    anchors: &HashMap<String, Anchor>,
-    config: &Config,
-) -> String {
+fn expand_nonfenced(content: &str, anchors: &HashMap<String, Anchor>, config: &Config) -> String {
     let re = Regex::new(r"\{anchor\}`([^`]+)`").unwrap();
     re.replace_all(content, |caps: &regex::Captures| {
         let name = &caps[1];
@@ -401,10 +400,7 @@ fn expand_single_block_anchor(
     anchors: &HashMap<String, Anchor>,
     config: &Config,
 ) -> String {
-    let body = fence_text
-        .strip_prefix("```{anchor}")
-        .unwrap_or("")
-        .trim();
+    let body = fence_text.strip_prefix("```{anchor}").unwrap_or("").trim();
     let body = body.strip_suffix("```").unwrap_or(body).trim();
     let name = body.lines().next().unwrap_or("").trim();
     match anchors.get(name) {
