@@ -6,6 +6,5 @@ src = "md"
 
 [preprocessor.anchor]
 command = "mdbook-ezanchor"
-scan-dirs = ["src"]
 
 [output.html]
