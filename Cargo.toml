@@ -3,6 +3,7 @@ name = "mdbook-ezanchor"
 version = "0.1.0"
 edition = "2024"
 description = "mdbook preprocessor for anchor references into source code"
+authors = ["Niko Matsakis <niko@alum.mit.edu>"]
 license = "MIT OR Apache-2.0"
 rust-version = "1.95.0"
 repository = "https://github.com/nikomatsakis/mdbook-ezanchor"
